@@ -1,17 +1,26 @@
-import * as React from 'react';
-import styled from 'styled-components';
+import * as React from "react";
+import styled from "styled-components";
 
-import Web3Modal from 'web3modal';
+import Web3Modal from "web3modal";
 // @ts-ignore
-import WalletConnectProvider from '@walletconnect/web3-provider';
-import Column from './components/Column';
-import Wrapper from './components/Wrapper';
-import Header from './components/Header';
-import Loader from './components/Loader';
-import ConnectButton from './components/ConnectButton';
+import WalletConnectProvider from "@walletconnect/web3-provider";
+import Column from "./components/Column";
+import Wrapper from "./components/Wrapper";
+import Header from "./components/Header";
+import Loader from "./components/Loader";
+import ConnectButton from "./components/ConnectButton";
+import Library from "./components/library/Library";
 
-import { Web3Provider } from '@ethersproject/providers';
-import { getChainData } from './helpers/utilities';
+import { Web3Provider } from "@ethersproject/providers";
+import { getChainData } from "./helpers/utilities";
+
+import { BOOK_LIBRARY_ADDRESS } from "./constants";
+import { BOOK_LIBRARY_ABI } from "./constants";
+
+import { LTOKEN_ADDRESS } from "./constants";
+import { LTOKEN_ABI } from "./constants";
+
+import { getContract } from "./helpers/ethers";
 
 const SLayout = styled.div`
   position: relative;
@@ -37,7 +46,7 @@ const SContainer = styled.div`
 `;
 
 const SLanding = styled(Column)`
-  height: 600px;
+  height: auto;
 `;
 
 // @ts-ignore
@@ -58,18 +67,24 @@ interface IAppState {
   result: any | null;
   electionContract: any | null;
   info: any | null;
+  tokenContract: any | null;
+  libraryContract: any | null;
+  BOOK_LIBRARY_ADDRESS: string;
 }
 
 const INITIAL_STATE: IAppState = {
   fetching: false,
-  address: '',
+  address: "",
   library: null,
   connected: false,
   chainId: 1,
   pendingRequest: false,
   result: null,
   electionContract: null,
-  info: null
+  info: null,
+  tokenContract: null,
+  libraryContract: null,
+  BOOK_LIBRARY_ADDRESS,
 };
 
 class App extends React.Component<any, any> {
@@ -81,13 +96,13 @@ class App extends React.Component<any, any> {
   constructor(props: any) {
     super(props);
     this.state = {
-      ...INITIAL_STATE
+      ...INITIAL_STATE,
     };
 
     this.web3Modal = new Web3Modal({
       network: this.getNetwork(),
       cacheProvider: true,
-      providerOptions: this.getProviderOptions()
+      providerOptions: this.getProviderOptions(),
     });
   }
 
@@ -104,20 +119,37 @@ class App extends React.Component<any, any> {
 
     const network = await library.getNetwork();
 
-    const address = this.provider.selectedAddress ? this.provider.selectedAddress : this.provider?.accounts[0];
+    const address = this.provider.selectedAddress
+      ? this.provider.selectedAddress
+      : this.provider?.accounts[0];
+
+    const tokenContract = getContract(
+      LTOKEN_ADDRESS,
+      LTOKEN_ABI,
+      library,
+      address
+    );
+
+    const libraryContract = getContract(
+      BOOK_LIBRARY_ADDRESS,
+      BOOK_LIBRARY_ABI,
+      library,
+      address
+    );
 
     await this.setState({
       library,
       chainId: network.chainId,
       address,
-      connected: true
+      connected: true,
+      tokenContract,
+      libraryContract,
     });
 
     await this.subscribeToProviderEvents(this.provider);
-
   };
 
-  public subscribeToProviderEvents = async (provider:any) => {
+  public subscribeToProviderEvents = async (provider: any) => {
     if (!provider.on) {
       return;
     }
@@ -126,11 +158,12 @@ class App extends React.Component<any, any> {
     provider.on("networkChanged", this.networkChanged);
     provider.on("close", this.close);
 
-    await this.web3Modal.off('accountsChanged');
+    await this.web3Modal.off("accountsChanged");
   };
 
-  public async unSubscribe(provider:any) {
+  public async unSubscribe(provider: any) {
     // Workaround for metamask widget > 9.0.3 (provider.off is undefined);
+    // @ts-ignore
     window.location.reload(false);
     if (!provider.off) {
       return;
@@ -142,24 +175,24 @@ class App extends React.Component<any, any> {
   }
 
   public changedAccount = async (accounts: string[]) => {
-    if(!accounts.length) {
-      // Metamask Lock fire an empty accounts array 
+    if (!accounts.length) {
+      // Metamask Lock fire an empty accounts array
       await this.resetApp();
     } else {
       await this.setState({ address: accounts[0] });
     }
-  }
+  };
 
   public networkChanged = async (networkId: number) => {
     const library = new Web3Provider(this.provider);
     const network = await library.getNetwork();
     const chainId = network.chainId;
     await this.setState({ chainId, library });
-  }
-  
+  };
+
   public close = async () => {
     this.resetApp();
-  }
+  };
 
   public getNetwork = () => getChainData(this.state.chainId).network;
 
@@ -168,9 +201,9 @@ class App extends React.Component<any, any> {
       walletconnect: {
         package: WalletConnectProvider,
         options: {
-          infuraId: process.env.REACT_APP_INFURA_ID
-        }
-      }
+          infuraId: process.env.REACT_APP_INFURA_ID,
+        },
+      },
     };
     return providerOptions;
   };
@@ -182,19 +215,13 @@ class App extends React.Component<any, any> {
     await this.unSubscribe(this.provider);
 
     this.setState({ ...INITIAL_STATE });
-
   };
 
   public render = () => {
-    const {
-      address,
-      connected,
-      chainId,
-      fetching
-    } = this.state;
+    const { address, connected, chainId, fetching } = this.state;
     return (
       <SLayout>
-        <Column maxWidth={1000} spanHeight>
+        <Column maxWidth={1500} spanHeight>
           <Header
             connected={connected}
             address={address}
@@ -209,10 +236,41 @@ class App extends React.Component<any, any> {
                 </SContainer>
               </Column>
             ) : (
-                <SLanding center>
-                  {!this.state.connected && <ConnectButton onClick={this.onConnect} />}
-                </SLanding>
-              )}
+              <SLanding center>
+                {!this.state.connected ? (
+                  <ConnectButton onClick={this.onConnect} />
+                ) : (
+                  <>
+                    <p>
+                      <a
+                        href={`https://ropsten.etherscan.io/address/${this.state.BOOK_LIBRARY_ADDRESS}`}
+                        style={{ color: "blue" }}
+                      >
+                        Library address:
+                      </a>{" "}
+                      {this.state.BOOK_LIBRARY_ADDRESS}
+                    </p>
+                    <p>
+                      <a
+                        href={`https://ropsten.etherscan.io/address/${LTOKEN_ADDRESS}`}
+                        style={{ color: "blue" }}
+                      >
+                        Token address:
+                      </a>{" "}
+                      {LTOKEN_ADDRESS}
+                    </p>
+                    <Library
+                      connected={connected}
+                      library={this.state.library}
+                      address={this.state.address}
+                      BOOK_LIBRARY_ADDRESS={this.state.BOOK_LIBRARY_ADDRESS}
+                      tokenContract={this.state.tokenContract}
+                      libraryContract={this.state.libraryContract}
+                    />
+                  </>
+                )}
+              </SLanding>
+            )}
           </SContent>
         </Column>
       </SLayout>
